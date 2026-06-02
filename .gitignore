@@ -1,0 +1,37 @@
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.nav
+*.snm
+*.vrb
+*.xdv
+
+# Generated PDFs (run `make` to rebuild)
+*.pdf
+
+# Local build directory (see Makefile)
+.build/
+
+# Python (venv used for PDF text extraction, etc.)
+.venv/
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
