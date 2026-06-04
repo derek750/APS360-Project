@@ -1,0 +1,157 @@
+\documentclass[final]{article}
+
+
+\usepackage{APS360}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}       % illustration figure
+\usepackage{float}          % [H] keeps figure in Illustration (not page top)
+
+\makeatletter
+\renewcommand{\@notice}{}
+\makeatother
+
+\title{CNN Logo Era Classification from Logopedia}
+\author{%
+  Derek Lau \\
+  1012104679, \texttt{derek.lau@mail.utoronto.ca}\\
+  \url{https://github.com/derek750/APS360-Project}
+}
+
+\begin{document}
+
+\maketitle
+\vspace{-0.55in}
+
+% Tighten paragraph and list spacing to fit the 2-page main-text limit.
+\setlength{\parskip}{3.5pt}
+\setlength{\abovecaptionskip}{4pt}
+
+\section*{Introduction}
+
+This project treats logo analysis as a \textbf{multi-class classification} task: given a single logo image, the model predicts the \textbf{decade} in which it was introduced. Labels reflect the design period rather than brand identity, so one company's visual history can span multiple classes while unrelated brands sharing era-wide conventions group together. Because corporate logos encode period-specific typography, color, and layout, predicting the visual era lets us \textbf{surface decade-level design trends} and \textbf{check whether a new mark fits} its intended historical aesthetic. \textbf{Deep learning} suits this task because these cues---subtle typeface variations, color treatments, ornamentation, and spatial layouts---are high-dimensional and hard to hand-engineer.
+
+\section*{Illustration}
+
+Figure~\ref{fig:pipeline} summarizes the end-to-end pipeline: the shallow CNN classifier and the color baseline are trained and evaluated on the same images and company-level splits.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.74\linewidth,keepaspectratio]{figures/APS360_Pipeline.png}
+  \caption{End-to-end pipeline: scrape Logopedia logo histories, label images by introduction decade with company-level splits, classify with a shallow CNN, and compare to a Palermo-style color baseline on the same images and splits.}
+  \label{fig:pipeline}
+\end{figure}
+
+\section*{Background \& Related Work}
+
+\textbf{1. Deep learning for logo recognition:}
+Bianco et al.~\cite{bianco2017deep} train a shallow CNN from scratch for logo recognition on FlickrLogos-32, beating larger pretrained and keypoint-based methods (F1 $0.946$, accuracy $0.958$) via augmentation, class balancing, and contrast normalization. This motivates our shallow CNN and training choices on a small, imbalanced corpus; unlike their brand-ID task, we predict \emph{when} a logo was designed, treating brand identity as a nuisance variable.
+
+\textbf{2. CNNs for cultural and stylistic image classification:}
+Surapaneni et al.~\cite{surapaneni2020art} classify Met Museum artworks by style, genre, and era using CNNs, and use Grad-CAM to confirm the network attends to meaningful visual regions rather than artifacts, an interpretability check we adopt for era-specific design cues.
+
+\textbf{3. Era-specific design conventions.}
+Logo design has evolved through period-bound conventions, ornate wordmarks, mid-century geometric marks, and flat digital-era logos, so each decade carries characteristic typography, color, and layout~\cite{halcon2024logo}, justifying decade-level labels across unrelated brands.
+
+\textbf{4. Dating images by decade:}
+Palermo et al.~\cite{palermo2012dating} classify historical color photographs by \emph{decade} using color features, achieving $45.7\%$ accuracy versus $26.0\%$ for untrained humans.
+We adopt the same decade label structure on corporate logos, replacing hand-crafted features with a CNN.
+
+\textbf{5. Decade-level visual trends with deep learning:}
+Ginosar et al.~\cite{ginosar2015yearbooks} train a CNN on $168{,}055$ yearbook portraits to predict portrait date (median error 4--6 years), finding salient regions reflect era-specific fashions rather than identity. This supports our hypothesis that era aesthetics are learnable and motivates company-level splits to test generalization beyond brand memorization.
+
+\section*{Data Processing}
+
+\textbf{1. Data collection:}
+I will build a custom dataset from \textbf{Logopedia}\footnote{\url{https://logos.fandom.com}} because no public corpus pairs logo images with usage years.
+Using the MediaWiki Action API (\texttt{action=query}), I query introduction-year categories to index companies, then fetch raw wikitext for each logo-history page.
+
+\textbf{2. Cleaning and labeling:}
+I extract usage years from section headers, captions, and filenames with regular expressions (e.g., \texttt{== 1987--2012 ==}, \texttt{Brand\_logo\_(1997).png}); for ranges, I use the start year.
+Each year maps to a decade via $\lfloor y/10 \rfloor \times 10$ (label \texttt{1990} denotes the 1990s).
+I resolve gallery filenames to CDN URLs via \texttt{prop=imageinfo}, rasterize SVGs and PNGs, pad them to a uniform aspect ratio, and resize them to $224\times224$ RGB images.
+I drop pages without parseable years or a clear timeline structure and remove duplicate assets for the same company and decade.
+
+\textbf{3. Splits:}
+I split by \textbf{company} (70/15/15 for train, validation, and test), so held-out brands test era aesthetics rather than trademark memorization.
+
+\section*{Architecture}
+
+\textbf{Input:}
+Each example is a $224\times224$ RGB logo image; transparent PNGs/SVGs are composited onto white, without metadata.
+
+\textbf{Classifier:}
+I will train a shallow 2D CNN from scratch on the logo dataset: a few conv--ReLU--pool blocks, global average pooling, and a linear head outputting \textbf{$K$ logits} (one per decade class).
+Training will use cross-entropy loss, the Adam optimizer, early stopping on validation macro-F1, and augmentation (rotation $\pm 10^\circ$, brightness/contrast jitter) on training images only.
+
+\section*{Baseline Model}
+
+I compare the shallow CNN to a Palermo-style color baseline~\cite{palermo2012dating} on the \textbf{same $224\times224$ images and company splits}.
+Per logo I extract RGB/HSV histograms and color moments, then fit multinomial logistic regression on the training split.
+The baseline uses palette statistics only; because era also depends on typography, ornamentation, and layout, the CNN should outperform it by learning spatial structure.
+
+Success means higher \textbf{macro-F1 and accuracy on held-out companies} than the baseline; modest gains trigger analysis of label noise, small $n$, and sector-style shortcuts.
+
+\section*{Ethical Considerations}
+
+\textbf{1. Wiki coverage bias:}
+Usage years are crowd-sourced and skew toward well-documented English/Western brands, so labels may be wrong or missing for smaller or non-Western companies.
+
+\textbf{2. Sector coverage:}
+Uneven industry coverage (e.g., minimal tech vs.\ illustrative retail in the same decade) can bias the CNN toward sector shortcuts rather than era-wide cues.
+
+\textbf{3. Misuse and accuracy:}
+Decade predictions are statistical guesses, not design facts; treating them as authoritative in brand audits or ``dated vs.\ modern'' judgments could be misleading.
+
+\textbf{4. Legal and scraping:}
+Logopedia logos are trademarked; I will scrape only via the MediaWiki API with rate limits and use images for coursework research, not redistribution.
+
+\newpage
+
+\begin{thebibliography}{99}
+
+\bibitem{bianco2017deep}
+S.~Bianco, M.~Buzzelli, D.~Mazzini, and R.~Schettini,
+``Deep learning for logo recognition,''
+\emph{Neurocomputing}, vol.~245, pp.~23--30, 2017.
+\url{https://arxiv.org/abs/1701.02620}
+
+\bibitem{surapaneni2020art}
+S.~Surapaneni, S.~Syed, and L.~Y.~Lee,
+``Exploring themes and bias in art using machine learning image analysis,''
+in \emph{IEEE Systems and Information Engineering Design Symposium (SIEDS)}, 2020.
+\url{https://doi.org/10.1109/SIEDS49339.2020.9106656}
+
+\bibitem{halcon2024logo}
+N.~Powell,
+``The evolution of logo design: Past, present, and future,''
+Halcon Marketing Solutions, 2024.
+\url{https://www.halconmarketing.com/post/evolution-of-logo-design-past-present-and-future}
+
+\bibitem{palermo2012dating}
+F.~Palermo, J.~Hays, and A.~A.~Efros,
+``Dating historical color images,''
+in \emph{ECCV}, pp.~499--512, 2012.
+\url{https://graphics.cs.cmu.edu/projects/historicalColor/}
+
+\bibitem{ginosar2015yearbooks}
+S.~Ginosar, K.~Rakelly, S.~Sachs, B.~Yin, C.~Lee, P.~Kr\"ahenb\"uhl, and A.~A.~Efros,
+``A century of portraits: A visual historical record of American high school yearbooks,''
+\emph{IEEE Transactions on Computational Imaging}, 2017.
+\url{https://arxiv.org/abs/1511.02575}
+
+\bibitem{anthropic2025claude}
+Anthropic,
+``Claude,'' large language model, 2025.
+\url{https://claude.ai}
+
+\end{thebibliography}
+
+\end{document}

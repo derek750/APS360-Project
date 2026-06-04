@@ -40,8 +40,9 @@ template.pdf: template.tex aps360.sty | $(BUILD)
 	@cd $(BUILD) && $(LATEX) $(LATEX_FLAGS) template.tex
 	@cp $(BUILD)/template.pdf $@
 
-proposal.pdf: proposal.tex aps360.sty | $(BUILD)
+proposal.pdf: proposal.tex aps360.sty figures/APS360_Pipeline.png | $(BUILD)
 	$(call prep_source,proposal.tex,proposal.tex)
+	@test -d figures && cp -r figures $(BUILD)/
 	@cd $(BUILD) && $(LATEX) $(LATEX_FLAGS) proposal.tex
 	@cd $(BUILD) && $(LATEX) $(LATEX_FLAGS) proposal.tex
 	@cp $(BUILD)/proposal.pdf $@
