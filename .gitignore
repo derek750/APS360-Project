@@ -19,6 +19,7 @@
 
 # Generated PDFs (run `make` to rebuild)
 *.pdf
+!figures/*.pdf
 
 # Local build directory (see Makefile)
 .build/
@@ -27,6 +28,11 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Dataset images (large); keep manifests in data/
+data/images/
+data/cache/
+data/manifest.json
 
 # OS / editor
 .DS_Store
