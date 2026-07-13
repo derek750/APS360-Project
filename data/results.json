@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "val": {
+      "accuracy": 0.15942028985507245,
+      "macro_f1": 0.045787545787545784
+    },
+    "test": {
+      "accuracy": 0.23636363636363636,
+      "macro_f1": 0.09280207809619574
+    }
+  },
+  "cnn": {
+    "val_macro_f1": 0.14480077745383868,
+    "test": {
+      "accuracy": 0.21818181818181817,
+      "macro_f1": 0.09292328042328042
+    },
+    "param_count": 243729,
+    "architecture": [
+      {
+        "layer": "Conv2d + BN + ReLU + MaxPool",
+        "channels": "3\u219232",
+        "kernel": 3
+      },
+      {
+        "layer": "Conv2d + BN + ReLU + MaxPool",
+        "channels": "32\u219264",
+        "kernel": 3
+      },
+      {
+        "layer": "Conv2d + BN + ReLU + MaxPool",
+        "channels": "64\u2192128",
+        "kernel": 3
+      },
+      {
+        "layer": "Conv2d + BN + ReLU + GAP",
+        "channels": "128\u2192128",
+        "kernel": 3
+      },
+      {
+        "layer": "Dropout(0.3) + Linear",
+        "channels": "128\u219217",
+        "kernel": "-"
+      }
+    ]
+  },
+  "feasibility": {
+    "cnn_beats_baseline_f1": true,
+    "cnn_test_macro_f1": 0.09292328042328042,
+    "baseline_test_macro_f1": 0.09280207809619574
+  }
+}

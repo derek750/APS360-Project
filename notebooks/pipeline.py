@@ -436,7 +436,7 @@ def train_baseline(records: list[LogoRecord], root: Path) -> dict:
     val_metrics = metrics(x_val_s, y_val)
     test_metrics = metrics(x_test_s, y_test)
     y_test_pred = model.predict(x_test_s)
-    cm = confusion_matrix(y_test, y_test_pred)
+    cm = confusion_matrix(y_test, y_test_pred, labels=list(range(len(label_values))))
 
     return {
         "labels": label_values,
@@ -494,19 +494,23 @@ class ShallowCNN(nn.Module):
         super().__init__()
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d(1),
         )
-        self.classifier = nn.Linear(128, num_classes)
+        self.classifier = nn.Sequential(nn.Dropout(0.3), nn.Linear(128, num_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
@@ -526,10 +530,17 @@ def train_cnn(records: list[LogoRecord], root: Path, device: torch.device) -> di
     val_records = [r for r in records if r.split == "val"]
     test_records = [r for r in records if r.split == "test"]
 
+    # Oversample rare decades so each batch sees a balanced class mix.
+    train_labels = [label_to_idx[r.decade] for r in train_records]
+    class_counts = Counter(train_labels)
+    sample_weights = [1.0 / class_counts[label] for label in train_labels]
+    sampler = torch.utils.data.WeightedRandomSampler(
+        sample_weights, num_samples=len(train_records), replacement=True
+    )
     train_loader = DataLoader(
         LogoDataset(train_records, root, label_to_idx, augment=True),
         batch_size=32,
-        shuffle=True,
+        sampler=sampler,
         num_workers=0,
     )
     val_loader = DataLoader(
@@ -546,15 +557,18 @@ def train_cnn(records: list[LogoRecord], root: Path, device: torch.device) -> di
     )
 
     model = ShallowCNN(num_classes=len(label_values)).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    # The balanced sampler already corrects imbalance; weighting the loss as
+    # well over-corrects and pushes predictions onto the rarest decades.
     criterion = nn.CrossEntropyLoss()
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=60)
 
     history = {"train_loss": [], "val_loss": [], "val_macro_f1": []}
     best_state = None
     best_f1 = -1.0
-    patience = 5
+    patience = 15
     stale = 0
-    max_epochs = 25
+    max_epochs = 60
 
     for epoch in range(max_epochs):
         model.train()
@@ -583,6 +597,7 @@ def train_cnn(records: list[LogoRecord], root: Path, device: torch.device) -> di
                 preds = logits.argmax(dim=1)
                 y_true.extend(labels.cpu().tolist())
                 y_pred.extend(preds.cpu().tolist())
+        scheduler.step()
         val_loss /= max(len(val_loader.dataset), 1)
         val_f1 = float(f1_score(y_true, y_pred, average="macro"))
 
@@ -614,7 +629,7 @@ def train_cnn(records: list[LogoRecord], root: Path, device: torch.device) -> di
 
     test_acc = float(accuracy_score(y_test_true, y_test_pred))
     test_f1 = float(f1_score(y_test_true, y_test_pred, average="macro"))
-    cm = confusion_matrix(y_test_true, y_test_pred)
+    cm = confusion_matrix(y_test_true, y_test_pred, labels=list(range(len(label_values))))
 
     return {
         "labels": label_values,
@@ -625,16 +640,13 @@ def train_cnn(records: list[LogoRecord], root: Path, device: torch.device) -> di
         "confusion_matrix": cm.tolist(),
         "y_test": y_test_true,
         "y_test_pred": y_test_pred,
+        "test_records": test_records,
         "architecture": [
-            {"layer": "Conv2d", "channels": "3→32", "kernel": 3},
-            {"layer": "ReLU + MaxPool2d", "channels": "32", "kernel": 2},
-            {"layer": "Conv2d", "channels": "32→64", "kernel": 3},
-            {"layer": "ReLU + MaxPool2d", "channels": "64", "kernel": 2},
-            {"layer": "Conv2d", "channels": "64→128", "kernel": 3},
-            {"layer": "ReLU + MaxPool2d", "channels": "128", "kernel": 2},
-            {"layer": "Conv2d", "channels": "128→128", "kernel": 3},
-            {"layer": "ReLU + AdaptiveAvgPool2d", "channels": "128", "kernel": 1},
-            {"layer": "Linear", "channels": f"128→{len(label_values)}", "kernel": "-"},
+            {"layer": "Conv2d + BN + ReLU + MaxPool", "channels": "3→32", "kernel": 3},
+            {"layer": "Conv2d + BN + ReLU + MaxPool", "channels": "32→64", "kernel": 3},
+            {"layer": "Conv2d + BN + ReLU + MaxPool", "channels": "64→128", "kernel": 3},
+            {"layer": "Conv2d + BN + ReLU + GAP", "channels": "128→128", "kernel": 3},
+            {"layer": "Dropout(0.3) + Linear", "channels": f"128→{len(label_values)}", "kernel": "-"},
         ],
     }
 
@@ -695,6 +707,71 @@ def _plot_confusion(cm: list[list[int]], labels: list[int], title: str, out_path
     plt.close(fig)
 
 
+def _plot_sample_predictions(
+    test_records: list[LogoRecord],
+    y_true: list[int],
+    y_pred: list[int],
+    labels: list[int],
+    root: Path,
+    out_path: Path,
+) -> None:
+    """Qualitative panel: correct predictions on top, mistakes on the bottom."""
+    correct = [i for i, (t, p) in enumerate(zip(y_true, y_pred)) if t == p]
+    wrong = [i for i, (t, p) in enumerate(zip(y_true, y_pred)) if t != p]
+    picks = correct[:4] + wrong[:4]
+    fig, axes = plt.subplots(2, 4, figsize=(9, 4.8))
+    axes = np.array(axes).reshape(-1)
+    for ax, idx in zip(axes, picks):
+        record = test_records[idx]
+        image = Image.open(root.parent / record.image_path)
+        ax.imshow(image)
+        true_lbl = f"{labels[y_true[idx]]}s"
+        pred_lbl = f"{labels[y_pred[idx]]}s"
+        ok = y_true[idx] == y_pred[idx]
+        ax.set_title(
+            f"{record.company[:16]}\ntrue {true_lbl} / pred {pred_lbl}",
+            fontsize=8,
+            color="#2E7D32" if ok else "#C62828",
+        )
+        ax.axis("off")
+    for ax in axes[len(picks):]:
+        ax.axis("off")
+    fig.suptitle("CNN test predictions (top: correct, bottom: errors)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_architecture(architecture: list[dict], param_count: int, out_path: Path) -> None:
+    """Horizontal block diagram of the CNN."""
+    blocks = [("Input\n224$\\times$224$\\times$3", "#E8EAF6")]
+    for item in architecture:
+        layer = item["layer"].replace(" + ", "\n")
+        blocks.append((f"{layer}\n{item['channels']}", "#C5CAE9"))
+    blocks.append(("Decade\nlogits", "#9FA8DA"))
+    fig, ax = plt.subplots(figsize=(10.5, 2.3))
+    n = len(blocks)
+    width, gap = 1.35, 0.42
+    for i, (text, color) in enumerate(blocks):
+        x = i * (width + gap)
+        ax.add_patch(plt.Rectangle((x, 0), width, 1, facecolor=color, edgecolor="#3F51B5"))
+        ax.text(x + width / 2, 0.5, text, ha="center", va="center", fontsize=7.5)
+        if i < n - 1:
+            ax.annotate(
+                "",
+                xy=(x + width + gap, 0.5),
+                xytext=(x + width, 0.5),
+                arrowprops={"arrowstyle": "->", "color": "#3F51B5"},
+            )
+    ax.set_xlim(-0.15, n * (width + gap) - gap + 0.15)
+    ax.set_ylim(-0.2, 1.2)
+    ax.set_title(f"Shallow CNN ({param_count:,} trainable parameters)", fontsize=10)
+    ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _plot_learning_curve(history: dict, out_path: Path) -> None:
     epochs = range(1, len(history["train_loss"]) + 1)
     fig, ax1 = plt.subplots(figsize=(6, 3.5))
@@ -738,6 +815,19 @@ def export_figures(
         figures_dir / "cnn_confusion.pdf",
     )
     _plot_learning_curve(cnn["history"], figures_dir / "cnn_learning_curve.pdf")
+    _plot_sample_predictions(
+        cnn["test_records"],
+        cnn["y_test"],
+        cnn["y_test_pred"],
+        cnn["labels"],
+        root,
+        figures_dir / "cnn_sample_predictions.pdf",
+    )
+    _plot_architecture(
+        cnn["architecture"],
+        cnn["param_count"],
+        figures_dir / "cnn_architecture.pdf",
+    )
 
 
 def run_pipeline(
